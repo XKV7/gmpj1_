@@ -45,10 +45,11 @@ function handleKeyPress(code) {
   if (gs.state === 'playing') {
     if (code === 'KeyP') gs.state = 'pause';
     if (code === 'Tab') { gs.prevState = 'playing'; gs.state = 'inventory'; }
-    if (code === 'KeyQ') useSkill(0);
-    if (code === 'KeyE') useSkill(1);
-    if (code === 'KeyR') useSkill(2);
-    if (code === 'KeyS') doDodge();
+    if (code === 'KeyQ') useBuiltinQ();
+    if (code === 'KeyE') useBuiltinE();
+    if (code === 'KeyC') doDodge();
+    if (code === 'KeyF') tryOpenShop();
+    if (code === 'KeyL' && player.statPoints > 0) gs.state = 'levelup';
   } else if (gs.state === 'pause') {
     if (code === 'KeyP') gs.state = 'playing';
   } else if (gs.state === 'inventory') {
@@ -133,6 +134,10 @@ const PASSIVE_RUNES = [
   },
 ];
 
+const BUILTIN_Q = { name:'검기', cooldown:3000 };
+const BUILTIN_E = { name:'패링', cooldown:5000 };
+let builtinQLastUsed = 0, builtinELastUsed = 0;
+
 // ===== PLAYER =====
 class Player {
   constructor() {
@@ -177,6 +182,11 @@ class Player {
     this.isWhirling = false;
     this.whirlTimer = 0;
     this._vampiric = false;
+    this.parryActive = false;
+    this.parryTimer = 0;
+    this.chargeTimer = 0;
+    this._rHeld = false;
+    this.chargeCooldown = 0;
   }
 }
 
@@ -223,6 +233,13 @@ class Projectile {
         }
       });
     }
+    // Hit boss
+    if (this.owner === 'player' && boss && !boss.isDead && !this.dead) {
+      if (Math.abs(this.x - boss.x) < boss.w/2 + this.w/2 && Math.abs(this.y - (boss.y - boss.h/2)) < boss.h/2 + this.h/2) {
+        dealDamage(player, boss, this.dmg);
+        if (this.type !== 'shockwave') this.dead = true;
+      }
+    }
   }
   draw(camX) {
     const sx = this.x - camX;
@@ -239,6 +256,17 @@ class Projectile {
       ctx.globalAlpha = 0.7;
       ctx.fillRect(sx - 15, this.y - 7, 30, 14);
       ctx.globalAlpha = 1;
+    } else if (this.type === 'swordBeam') {
+      ctx.save(); ctx.translate(sx, this.y);
+      const angle = Math.atan2(this.vy, this.vx);
+      ctx.rotate(angle);
+      ctx.shadowBlur = 15; ctx.shadowColor = '#aaf';
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(-25, -4, 50, 8);
+      ctx.fillStyle = '#aaf';
+      ctx.fillRect(-22, -2, 44, 4);
+      ctx.shadowBlur = 0;
+      ctx.restore();
     } else {
       // arrow
       ctx.save(); ctx.translate(sx, this.y);
@@ -625,7 +653,7 @@ let effects = [];
 let floatTexts = [];
 
 function spawnEffect(type, x, y, color) {
-  effects.push({ type, x, y, color: color||'#fff', timer: 0, maxTimer: type==='explosion'?30:type==='area'?25:20 });
+  effects.push({ type, x, y, color: color||'#fff', timer: 0, maxTimer: type==='explosion'?30:type==='area'?25:type==='chargeSlash'?30:20 });
 }
 
 function spawnDamageNumber(x, y, dmg, crit) {
@@ -661,6 +689,16 @@ function drawEffects(camX) {
     } else if (e.type === 'stomp') {
       ctx.strokeStyle = e.color; ctx.lineWidth = 2;
       ctx.beginPath(); ctx.ellipse(sx, e.y, t*100, 15, 0, 0, Math.PI*2); ctx.stroke();
+    } else if (e.type === 'chargeSlash') {
+      const t2 = e.timer / e.maxTimer;
+      ctx.strokeStyle = `rgba(255,255,200,${1-t2})`;
+      ctx.lineWidth = 8 - t2 * 6;
+      ctx.beginPath();
+      ctx.moveTo(sx - 200, e.y);
+      ctx.lineTo(sx + 200, e.y);
+      ctx.stroke();
+      ctx.fillStyle = `rgba(255,255,255,${0.4*(1-t2)})`;
+      ctx.fillRect(sx - 200, e.y - 30, 400, 60);
     } else {
       ctx.strokeStyle = e.color; ctx.lineWidth = 2;
       ctx.beginPath(); ctx.arc(sx, e.y, t*25, 0, Math.PI*2); ctx.stroke();
@@ -841,6 +879,22 @@ function dealDamage(attacker, target, rawDmg) {
 }
 
 function takeDamage(p, rawDmg) {
+  // Parry: if active window, counter-attack instead
+  if (p.parryActive && p.parryTimer > 0) {
+    p.parryActive = false;
+    p.parryTimer = 0;
+    p.iframes = 40;
+    spawnEffect('area', p.x, p.y - 16, '#00ffff');
+    floorData.enemies.filter(e => !e.isDead).forEach(e => {
+      if (Math.abs(e.x - p.x) < 200) {
+        dealDamage(p, e, p.atk * 4);
+        e.vx = (e.x > p.x ? 1 : -1) * 12; e.vy = -4;
+      }
+    });
+    if (boss && !boss.isDead && Math.abs(boss.x - p.x) < 200)
+      dealDamage(p, boss, p.atk * 4);
+    return; // no damage taken
+  }
   if (p.iframes > 0 || p.isDodging) return;
   const def = p.def || 0;
   const dmg = Math.max(1, rawDmg - def * 0.5);
@@ -870,6 +924,40 @@ function useSkill(slot) {
   player.skillLastUsed[slot] = now;
   rune.use(player, floorData.enemies.filter(e => !e.isDead), projectiles);
   if (boss && !boss.isDead) rune.use(player, [boss], projectiles);
+}
+
+function tryOpenShop() {
+  if (floorData && floorData.isShopFloor && Math.abs(player.x - 2500) < 150) {
+    shopItems = SHOP_ITEMS.map(i => ({ ...i, sold: false }));
+    gs.state = 'shop';
+  }
+}
+
+function useBuiltinQ() {
+  const now = Date.now();
+  const cd = BUILTIN_Q.cooldown * (1 - (player.cdReduction||0));
+  if (now - builtinQLastUsed < cd) return;
+  builtinQLastUsed = now;
+  // Fire a glowing sword beam projectile
+  projectiles.push(new Projectile(
+    player.x + player.facing * 20,
+    player.y - 16,
+    player.facing * 14, 0,
+    player.atk * 2.5,
+    'swordBeam', '#aaf', 'player'
+  ));
+  spawnEffect('slash', player.x + player.facing*30, player.y-16, '#aaf');
+}
+
+function useBuiltinE() {
+  const now = Date.now();
+  const cd = BUILTIN_E.cooldown * (1 - (player.cdReduction||0));
+  if (now - builtinELastUsed < cd) return;
+  builtinELastUsed = now;
+  player.parryActive = true;
+  player.parryTimer = 35; // ~0.58s window at 60fps
+  player.iframes = 8;
+  spawnEffect('area', player.x, player.y-16, '#4af');
 }
 
 function doDodge() {
@@ -927,6 +1015,8 @@ function updatePlayer(dt) {
   if (p.attackCooldown > 0) p.attackCooldown--;
   if (p.attackTimer > 0) { p.attackTimer--; if (p.attackTimer === 0) { p.isAttacking = false; p.attackHitbox = null; } }
   if (p.isDodging) { p.dodgeTimer--; if (p.dodgeTimer <= 0) p.isDodging = false; }
+  if (p.parryTimer > 0) { p.parryTimer--; if (p.parryTimer <= 0) p.parryActive = false; }
+  if (p.chargeCooldown > 0) p.chargeCooldown--;
 
   // Movement
   if (!p.isDodging) {
@@ -940,8 +1030,8 @@ function updatePlayer(dt) {
     if (!(keys['KeyW'] || keys['ArrowUp'] || keys['Space'])) p._jumpHeld = false;
   }
 
-  // Attack (mouse click)
-  if (mouse.clicked && p.attackCooldown === 0) {
+  // Attack (mouse click or K key)
+  if ((mouse.clicked || keys['KeyK']) && p.attackCooldown === 0) {
     mouse.clicked = false;
     const atkInterval = Math.round(25 / p.atkSpeed);
     p.attackCooldown = atkInterval;
@@ -955,26 +1045,26 @@ function updatePlayer(dt) {
     const psx = p.x - camX;
     if (mouse.x < psx) p.facing = -1;
     else p.facing = 1;
-    // Hitbox — wide forward arc
+    // Hitbox — tight forward arc
     const comboMultiplier = [1, 1.2, 1.8][p.comboCount];
-    const hx = p.x + p.facing * 160;
+    const hx = p.x + p.facing * 70;
     const hy = p.y - p.h / 2;
-    p.attackHitbox = { x: hx, y: hy, w: 200, h: 80 };
+    p.attackHitbox = { x: hx, y: hy, w: 120, h: 60 };
     // Brief iframes during swing so enemies cannot instantly counter
     p.iframes = Math.max(p.iframes, 10);
     // Hit enemies
     floorData.enemies.filter(e => !e.isDead).forEach(e => {
-      if (Math.abs(e.x - hx) < 220 && Math.abs(e.y - hy - (e.h || 30) / 2) < 85) {
+      if (Math.abs(e.x - hx) < 130 && Math.abs(e.y - hy - (e.h || 30) / 2) < 70) {
         dealDamage(p, e, p.atk * comboMultiplier);
         // Knockback — push enemy away from player
-        e.vx = p.facing * 7;
-        e.vy = -3;
+        e.vx = p.facing * 6;
+        e.vy = -2;
       }
     });
     if (boss && !boss.isDead) {
-      if (Math.abs(boss.x - hx) < boss.w / 2 + 110 && Math.abs(boss.y - hy - boss.h / 2) < boss.h / 2 + 60) {
+      if (Math.abs(boss.x - hx) < boss.w / 2 + 70 && Math.abs(boss.y - hy - boss.h / 2) < boss.h / 2 + 45) {
         dealDamage(p, boss, p.atk * comboMultiplier);
-        boss.vx = p.facing * 4;
+        boss.vx = p.facing * 3;
       }
     }
     spawnEffect('slash', hx, hy, '#fff');
@@ -993,6 +1083,36 @@ function updatePlayer(dt) {
   }
   p.x = Math.max(p.w/2, Math.min(WORLD_W - p.w/2, p.x));
   if (p.y > GROUND_Y + 100) takeDamage(p, 9999);
+
+  // R: charge slash (hold 1.5s = 90 frames, then release)
+  if (keys['KeyR'] && !p._rHeld) { p._rHeld = true; p.chargeTimer = 0; }
+  if (keys['KeyR'] && p._rHeld) { p.chargeTimer++; }
+  if (!keys['KeyR'] && p._rHeld) {
+    p._rHeld = false;
+    if (p.chargeTimer >= 90 && p.chargeCooldown <= 0) {
+      doChargeSlash(p);
+      p.chargeCooldown = 150;
+    }
+    p.chargeTimer = 0;
+  }
+}
+
+function doChargeSlash(p) {
+  const hx = p.x + p.facing * 120;
+  const hy = p.y - p.h / 2;
+  p.iframes = 20;
+  floorData.enemies.filter(e => !e.isDead).forEach(e => {
+    if (Math.abs(e.x - hx) < 260 && Math.abs(e.y - hy - (e.h||30)/2) < 90) {
+      dealDamage(p, e, p.atk * 4.5);
+      e.vx = p.facing * 14; e.vy = -6;
+    }
+  });
+  if (boss && !boss.isDead) {
+    if (Math.abs(boss.x - hx) < boss.w/2 + 180 && Math.abs(boss.y - hy - boss.h/2) < boss.h/2 + 60)
+      dealDamage(p, boss, p.atk * 4.5);
+  }
+  spawnEffect('chargeSlash', hx, hy, '#ffffff');
+  spawnEffect('slash', p.x + p.facing*60, hy, '#ffff88');
 }
 
 function updateEnemies(dt) {
