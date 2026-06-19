@@ -187,6 +187,8 @@ class Player {
     this.chargeTimer = 0;
     this._rHeld = false;
     this.chargeCooldown = 0;
+    this.coyoteTimer = 0;   // frames after leaving platform where jump still allowed
+    this.jumpBuffer = 0;    // frames ahead of landing where jump input is queued
   }
 }
 
@@ -309,9 +311,8 @@ class Enemy {
     this.facing = dx > 0 ? 1 : -1;
 
     if (this.type === 'archer') {
-      if (dist < 180) this.vx = -this.facing * this.speed;
-      else if (dist > 320) this.vx = this.facing * this.speed;
-      else this.vx *= 0.8;
+      const archerTarget = dist < 180 ? -this.facing * this.speed : dist > 320 ? this.facing * this.speed : 0;
+      this.vx += (archerTarget - this.vx) * 0.12; // gradual steering
       if (this.attackCooldown === 0 && dist < 380 && this.onGround) {
         const dy = (player.y - this.y);
         const spd = 5;
@@ -320,16 +321,17 @@ class Enemy {
         this.attackCooldown = this.atkCD;
       }
     } else if (this.type === 'swordsman') {
-      if (dist > 70) this.vx = this.facing * this.speed;
-      else this.vx = 0;
+      const swTarget = dist > 70 ? this.facing * this.speed : 0;
+      this.vx += (swTarget - this.vx) * 0.18; // charge-up then brake
       if (this.attackCooldown === 0 && dist < 80 && Math.abs(player.y - this.y) < 50) {
         takeDamage(player, this.atk);
         this.attackCooldown = this.atkCD;
       }
     } else if (this.type === 'bomber') {
       if (!this.isFusing) {
-        if (dist > 50) this.vx = this.facing * this.speed;
-        else { this.vx = 0; this.isFusing = true; this.fuseTimer = 55; }
+        const bombTarget = dist > 50 ? this.facing * this.speed : 0;
+        this.vx += (bombTarget - this.vx) * 0.15;
+        if (dist <= 50) { this.isFusing = true; this.fuseTimer = 55; }
       } else {
         this.vx = 0;
         this.fuseTimer--;
@@ -405,6 +407,8 @@ class Boss {
     this.floorNum = floorNum; this.phase = 1;
     this.attackTimer = 0; this.specialTimer = 0;
     this.isDead = false; this.vx = 0; this.vy = 0;
+    this.telegraphTimer = 0;  // pre-attack warning frames (boss freezes + flashes)
+    this.pendingAttack = null; // attack function queued during telegraph
     this.onGround = false; this.iframes = 0; this.facing = -1;
     this.laserActive = false; this.laserTimer = 0; this.laserAngle = 0;
     this.beamActive = false; this.beamTimer = 0; this.beamY = 0;
@@ -451,7 +455,20 @@ class Boss {
     }
     this.x = Math.max(this.w/2 + 100, Math.min(WORLD_W - 100, this.x));
   }
+  telegraph(frames, attackFn) {
+    this.telegraphTimer = frames;
+    this.pendingAttack = attackFn;
+  }
   doAI(player, projectiles, effects) {
+    if (this.telegraphTimer > 0) {
+      this.telegraphTimer--;
+      this.vx *= 0.80; // freeze during telegraph
+      if (this.telegraphTimer === 0 && this.pendingAttack) {
+        this.pendingAttack(player, projectiles, effects);
+        this.pendingAttack = null;
+      }
+      return;
+    }
     const fn = this.floorNum;
     if (fn <= 10) this.golemAI(player, projectiles, effects);
     else if (fn <= 20) this.wyvernAI(player, projectiles, effects);
@@ -463,17 +480,23 @@ class Boss {
     if (Math.abs(player.x - this.x) > 120) this.vx += this.facing * 0.35;
     const spd = this.phase >= 2 ? 100 : 120;
     if (this.attackTimer % spd === 0 && this.onGround) {
-      projectiles.push(new Projectile(this.x - 80, this.y - 8, -4, 0, this.atk * 0.8, 'shockwave', '#888', this));
-      projectiles.push(new Projectile(this.x + 80, this.y - 8, 4, 0, this.atk * 0.8, 'shockwave', '#888', this));
-      spawnEffect('stomp', this.x, this.y, '#888');
+      const bx = this.x, by = this.y, bf = this.facing;
+      this.telegraph(20, (pl, proj, eff) => {
+        proj.push(new Projectile(bx - 80, by - 8, -4, 0, this.atk * 0.8, 'shockwave', '#888', this));
+        proj.push(new Projectile(bx + 80, by - 8, 4, 0, this.atk * 0.8, 'shockwave', '#888', this));
+        spawnEffect('stomp', bx, by, '#888');
+      });
     }
     const throwCd = this.phase >= 2 ? 150 : 220;
     if (this.specialTimer % throwCd === 0) {
       const count = this.phase >= 2 ? 3 : 1;
-      for (let i = 0; i < count; i++) {
-        projectiles.push(new Projectile(this.x + this.facing*40 + i*15, this.y - 60,
-          this.facing*(5+i*0.8) + (Math.random()-0.5)*1.5, -8 - i, this.atk, 'boulder', '#888', this));
-      }
+      const bx = this.x, by = this.y, bf = this.facing;
+      this.telegraph(25, (pl, proj) => {
+        for (let i = 0; i < count; i++) {
+          proj.push(new Projectile(bx + bf*40 + i*15, by - 60,
+            bf*(5+i*0.8) + (Math.random()-0.5)*1.5, -8 - i, this.atk, 'boulder', '#888', this));
+        }
+      });
     }
   }
   wyvernAI(player, projectiles, effects) {
@@ -481,50 +504,70 @@ class Boss {
     if (Math.abs(player.x - this.x) > 180) this.vx += this.facing * 0.45;
     const cd = this.phase >= 2 ? 70 : 95;
     if (this.attackTimer % cd === 0) {
-      for (let i = 0; i < 3; i++) {
-        projectiles.push(new Projectile(this.x + this.facing*50, this.y - 30 + i*14,
-          this.facing*(7+i*0.5), (i-1)*0.6, this.atk*0.55, 'fire', '#FF4500', this));
-      }
+      const bx = this.x, by = this.y, bf = this.facing;
+      this.telegraph(15, (pl, proj) => {
+        for (let i = 0; i < 3; i++) {
+          proj.push(new Projectile(bx + bf*50, by - 30 + i*14,
+            bf*(7+i*0.5), (i-1)*0.6, this.atk*0.55, 'fire', '#FF4500', this));
+        }
+      });
     }
     if (this.phase >= 2 && this.specialTimer % 140 === 0) {
-      for (let i = 0; i < 5; i++) {
-        projectiles.push(new Projectile(player.x + (Math.random()-0.5)*350, -30, 0, 6+Math.random()*2, this.atk*0.6, 'fireball', '#FF6600', this));
-      }
+      const px = player.x;
+      this.telegraph(20, (pl, proj) => {
+        for (let i = 0; i < 5; i++) {
+          proj.push(new Projectile(px + (Math.random()-0.5)*350, -30, 0, 6+Math.random()*2, this.atk*0.6, 'fireball', '#FF6600', this));
+        }
+      });
     }
   }
   assassinAI(player, projectiles, effects) {
     const dist = Math.abs(player.x - this.x);
     if (dist > 80) this.vx += this.facing * 0.5;
     if (this.specialTimer % 160 === 0) {
-      this.x = player.x - this.facing * 70;
-      this.y = player.y; this.iframes = 15;
-      spawnEffect('teleport', this.x, this.y - this.h/2, '#800080');
+      const bf = this.facing;
+      this.telegraph(12, (pl) => {
+        this.x = pl.x - bf * 70;
+        this.y = pl.y; this.iframes = 15;
+        spawnEffect('teleport', this.x, this.y - this.h/2, '#800080');
+      });
     }
     if (this.attackTimer % 35 === 0) {
-      const d = Math.hypot(player.x - this.x, player.y - this.y);
-      if (d < 65) takeDamage(player, this.atk * 0.55);
+      const bx = this.x, by = this.y;
+      this.telegraph(10, (pl) => {
+        const d = Math.hypot(pl.x - bx, pl.y - by);
+        if (d < 65) takeDamage(pl, this.atk * 0.55);
+      });
     }
     if (this.phase >= 2 && this.attackTimer % 60 === 0) {
-      const a = Math.atan2(player.y - this.y, player.x - this.x);
-      for (let i = -1; i <= 1; i++) {
-        const ang = a + i * 0.4;
-        projectiles.push(new Projectile(this.x, this.y - this.h*0.5, Math.cos(ang)*6, Math.sin(ang)*6, this.atk*0.4, 'magic', '#800080', this));
-      }
+      const bx = this.x, by = this.y;
+      this.telegraph(14, (pl, proj) => {
+        const a = Math.atan2(pl.y - by, pl.x - bx);
+        for (let i = -1; i <= 1; i++) {
+          const ang = a + i * 0.4;
+          proj.push(new Projectile(bx, by - this.h*0.5, Math.cos(ang)*6, Math.sin(ang)*6, this.atk*0.4, 'magic', '#800080', this));
+        }
+      });
     }
   }
   lichAI(player, projectiles, effects) {
     this.vy = Math.sin(this.attackTimer * 0.025) * 2 - GRAVITY * 0.7;
     const cd = this.phase >= 2 ? 110 : 150;
     if (this.attackTimer % cd === 0) {
-      const a = Math.atan2(player.y - this.y, player.x - this.x);
-      for (let i = 0; i < 3; i++) {
-        const ang = a + (i-1)*0.35;
-        projectiles.push(new Projectile(this.x, this.y - 40, Math.cos(ang)*4.5, Math.sin(ang)*4.5, this.atk*0.55, 'magic', '#00BFFF', this));
-      }
+      const bx = this.x, by = this.y;
+      this.telegraph(16, (pl, proj) => {
+        const a = Math.atan2(pl.y - by, pl.x - bx);
+        for (let i = 0; i < 3; i++) {
+          const ang = a + (i-1)*0.35;
+          proj.push(new Projectile(bx, by - 40, Math.cos(ang)*4.5, Math.sin(ang)*4.5, this.atk*0.55, 'magic', '#00BFFF', this));
+        }
+      });
     }
     if (this.phase >= 2 && this.specialTimer % 280 === 0) { this.summonMinion = true; }
     if (this.phase >= 2 && this.attackTimer % 200 === 0) {
-      this.laserActive = true; this.laserTimer = 60; this.laserAngle = this.facing < 0 ? 0 : Math.PI;
+      this.telegraph(22, () => {
+        this.laserActive = true; this.laserTimer = 60; this.laserAngle = this.facing < 0 ? 0 : Math.PI;
+      });
     }
     if (this.laserActive) {
       this.laserTimer--;
@@ -539,21 +582,33 @@ class Boss {
     const spd = this.phase >= 2 ? 0.7 : 0.55;
     if (Math.abs(player.x - this.x) > 130) this.vx += this.facing * spd;
     if (this.attackTimer % 75 === 0) {
-      if (Math.abs(player.x - this.x) < 160 && Math.abs(player.y - this.y) < 90) takeDamage(player, this.atk);
+      const bx = this.x, by = this.y;
+      this.telegraph(18, (pl) => {
+        if (Math.abs(pl.x - bx) < 160 && Math.abs(pl.y - by) < 90) takeDamage(pl, this.atk);
+      });
     }
     const gcd = this.phase >= 2 ? 160 : 200;
     if (this.specialTimer % gcd === 0 && this.onGround) {
-      projectiles.push(new Projectile(this.x - 200, this.y - 8, -3.5, 0, this.atk*0.7, 'shockwave', '#F00', this));
-      projectiles.push(new Projectile(this.x + 200, this.y - 8, 3.5, 0, this.atk*0.7, 'shockwave', '#F00', this));
+      const bx = this.x, by = this.y;
+      this.telegraph(22, (pl, proj) => {
+        proj.push(new Projectile(bx - 200, by - 8, -3.5, 0, this.atk*0.7, 'shockwave', '#F00', this));
+        proj.push(new Projectile(bx + 200, by - 8, 3.5, 0, this.atk*0.7, 'shockwave', '#F00', this));
+      });
     }
     if (this.phase >= 2 && this.attackTimer % 110 === 0) {
-      for (let i = 0; i < 5; i++) {
-        const a = -Math.PI/2 + (i-2)*0.4;
-        projectiles.push(new Projectile(this.x, this.y - 55, Math.cos(a)*6, Math.sin(a)*6, this.atk*0.45, 'magic', '#FF0000', this));
-      }
+      const bx = this.x, by = this.y;
+      this.telegraph(20, (pl, proj) => {
+        for (let i = 0; i < 5; i++) {
+          const a = -Math.PI/2 + (i-2)*0.4;
+          proj.push(new Projectile(bx, by - 55, Math.cos(a)*6, Math.sin(a)*6, this.atk*0.45, 'magic', '#FF0000', this));
+        }
+      });
     }
     if (this.phase >= 3 && this.specialTimer % 240 === 0) {
-      this.beamActive = true; this.beamTimer = 90; this.beamY = player.y - 16;
+      const py = player.y;
+      this.telegraph(25, () => {
+        this.beamActive = true; this.beamTimer = 90; this.beamY = py - 16;
+      });
     }
     if (this.beamActive) {
       this.beamTimer--;
@@ -564,8 +619,16 @@ class Boss {
   draw(camX) {
     const sx = this.x - camX;
     const sy = this.y - this.h;
+    const telegFlash = this.telegraphTimer > 0 && Math.floor(this.telegraphTimer/3)%2===0;
     const flash = this.iframes > 0 && Math.floor(this.iframes/3)%2===0;
     ctx.globalAlpha = flash ? 0.4 : 1.0;
+    if (telegFlash) {
+      ctx.save();
+      ctx.globalAlpha = 0.85;
+      ctx.fillStyle = '#FFD700';
+      ctx.fillRect(sx - this.w/2 - 6, sy - 6, this.w + 12, this.h + 12);
+      ctx.restore();
+    }
     const fn = this.floorNum;
     if (fn <= 10) {
       ctx.fillStyle = this.color;
@@ -1018,16 +1081,38 @@ function updatePlayer(dt) {
   if (p.parryTimer > 0) { p.parryTimer--; if (p.parryTimer <= 0) p.parryActive = false; }
   if (p.chargeCooldown > 0) p.chargeCooldown--;
 
-  // Movement
+  // Movement with inertia + coyote time + jump buffer
   if (!p.isDodging) {
-    if (keys['KeyA'] || keys['ArrowLeft']) { p.vx = -p.speed; p.facing = -1; }
-    else if (keys['KeyD'] || keys['ArrowRight']) { p.vx = p.speed; p.facing = 1; }
-    else p.vx *= 0.8;
-    // Jump
-    if ((keys['KeyW'] || keys['ArrowUp'] || keys['Space']) && !p._jumpHeld) {
-      if (p.jumpsLeft > 0) { p.vy = JUMP_FORCE; p.jumpsLeft--; p._jumpHeld = true; }
+    const moveRight = keys['KeyD'] || keys['ArrowRight'];
+    const moveLeft  = keys['KeyA'] || keys['ArrowLeft'];
+    const jumpKey   = keys['KeyW'] || keys['ArrowUp'] || keys['Space'];
+
+    // Smooth acceleration / deceleration
+    if (moveRight)      { p.vx += (p.speed  - p.vx) * 0.22; p.facing =  1; }
+    else if (moveLeft)  { p.vx += (-p.speed - p.vx) * 0.22; p.facing = -1; }
+    else                { p.vx *= p.onGround ? 0.70 : 0.92; } // ground friction vs air drag
+
+    // Coyote time: 8 frames after walking off edge where jump still works
+    if (p.onGround) { p.coyoteTimer = 8; }
+    else if (p.coyoteTimer > 0) { p.coyoteTimer--; }
+
+    // Jump buffer: queue a jump up to 12 frames before landing
+    if (jumpKey && !p._jumpHeld) { p.jumpBuffer = 12; }
+    if (!jumpKey) { p._jumpHeld = false; }
+    if (p.jumpBuffer > 0) { p.jumpBuffer--; }
+
+    // Execute jump (uses buffer + coyote)
+    const canJump = p.jumpsLeft > 0 || p.coyoteTimer > 0;
+    if (p.jumpBuffer > 0 && canJump && !p._jumpHeld) {
+      p.vy = JUMP_FORCE;
+      if (p.coyoteTimer > 0 && !p.onGround) { p.coyoteTimer = 0; } // coyote used
+      else { p.jumpsLeft = Math.max(0, p.jumpsLeft - 1); }
+      p._jumpHeld = true;
+      p.jumpBuffer = 0;
     }
-    if (!(keys['KeyW'] || keys['ArrowUp'] || keys['Space'])) p._jumpHeld = false;
+
+    // Variable jump height: hold key to go higher (release early = lower arc)
+    if (jumpKey && p.vy < -4) { p.vy -= 0.45; }
   }
 
   // Attack (mouse click or K key)
@@ -1070,8 +1155,8 @@ function updatePlayer(dt) {
     spawnEffect('slash', hx, hy, '#fff');
   } else { mouse.clicked = false; }
 
-  // Physics
-  p.vy += GRAVITY;
+  // Physics — fall faster than rise for snappy, weighty feel
+  p.vy += GRAVITY * (p.vy > 0 ? 1.6 : 1.0);
   if (p.vy > MAX_FALL_SPEED) p.vy = MAX_FALL_SPEED;
   p.x += p.vx; p.y += p.vy;
   p.onGround = false;
