@@ -292,9 +292,9 @@ class Enemy {
         this.attackCooldown = this.atkCD;
       }
     } else if (this.type === 'swordsman') {
-      if (dist > 35) this.vx = this.facing * this.speed;
+      if (dist > 70) this.vx = this.facing * this.speed;
       else this.vx = 0;
-      if (this.attackCooldown === 0 && dist < this.atkRange && Math.abs(player.y - this.y) < 50) {
+      if (this.attackCooldown === 0 && dist < 80 && Math.abs(player.y - this.y) < 50) {
         takeDamage(player, this.atk);
         this.attackCooldown = this.atkCD;
       }
@@ -955,20 +955,26 @@ function updatePlayer(dt) {
     const psx = p.x - camX;
     if (mouse.x < psx) p.facing = -1;
     else p.facing = 1;
-    // Hitbox
+    // Hitbox — wide forward arc
     const comboMultiplier = [1, 1.2, 1.8][p.comboCount];
-    const hx = p.x + p.facing * 90;
+    const hx = p.x + p.facing * 160;
     const hy = p.y - p.h / 2;
-    p.attackHitbox = { x: hx, y: hy, w: 140, h: 70 };
+    p.attackHitbox = { x: hx, y: hy, w: 200, h: 80 };
+    // Brief iframes during swing so enemies cannot instantly counter
+    p.iframes = Math.max(p.iframes, 10);
     // Hit enemies
     floorData.enemies.filter(e => !e.isDead).forEach(e => {
-      if (Math.abs(e.x - hx) < 150 && Math.abs(e.y - hy - (e.h || 30) / 2) < 75) {
+      if (Math.abs(e.x - hx) < 220 && Math.abs(e.y - hy - (e.h || 30) / 2) < 85) {
         dealDamage(p, e, p.atk * comboMultiplier);
+        // Knockback — push enemy away from player
+        e.vx = p.facing * 7;
+        e.vy = -3;
       }
     });
     if (boss && !boss.isDead) {
-      if (Math.abs(boss.x - hx) < boss.w / 2 + 80 && Math.abs(boss.y - hy - boss.h / 2) < boss.h / 2 + 50) {
+      if (Math.abs(boss.x - hx) < boss.w / 2 + 110 && Math.abs(boss.y - hy - boss.h / 2) < boss.h / 2 + 60) {
         dealDamage(p, boss, p.atk * comboMultiplier);
+        boss.vx = p.facing * 4;
       }
     }
     spawnEffect('slash', hx, hy, '#fff');
