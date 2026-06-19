@@ -957,17 +957,17 @@ function updatePlayer(dt) {
     else p.facing = 1;
     // Hitbox
     const comboMultiplier = [1, 1.2, 1.8][p.comboCount];
-    const hx = p.x + p.facing * 60;
-    const hy = p.y - p.h/2;
-    p.attackHitbox = { x: hx, y: hy, w: 90, h: 55 };
+    const hx = p.x + p.facing * 90;
+    const hy = p.y - p.h / 2;
+    p.attackHitbox = { x: hx, y: hy, w: 140, h: 70 };
     // Hit enemies
     floorData.enemies.filter(e => !e.isDead).forEach(e => {
-      if (Math.abs(e.x - hx) < 95 && Math.abs(e.y - hy - (e.h||30)/2) < 60) {
+      if (Math.abs(e.x - hx) < 150 && Math.abs(e.y - hy - (e.h || 30) / 2) < 75) {
         dealDamage(p, e, p.atk * comboMultiplier);
       }
     });
     if (boss && !boss.isDead) {
-      if (Math.abs(boss.x - hx) < boss.w/2 + 55 && Math.abs(boss.y - hy - boss.h/2) < boss.h/2 + 35) {
+      if (Math.abs(boss.x - hx) < boss.w / 2 + 80 && Math.abs(boss.y - hy - boss.h / 2) < boss.h / 2 + 50) {
         dealDamage(p, boss, p.atk * comboMultiplier);
       }
     }
@@ -1048,20 +1048,26 @@ function drawGame() {
   // Platforms
   for (const p of floorData.platforms) {
     const sx = p.x - camX;
-    if (sx + p.w > -10 && sx < CANVAS_W + 10) {
-      if (p.type === 'ground') {
-        ctx.fillStyle = '#3a2a1a'; ctx.fillRect(sx, p.y, p.w, p.h);
-        ctx.fillStyle = '#5a3a2a'; ctx.fillRect(sx, p.y, p.w, 8);
-        // Tile marks
-        ctx.fillStyle = '#4a2f1a';
-        for (let tx = Math.max(0, -sx); tx < p.w && sx+tx < CANVAS_W; tx += 60) {
-          ctx.fillRect(sx + tx, p.y, 2, 8);
-        }
-      } else {
-        ctx.fillStyle = '#4a3828'; ctx.fillRect(sx, p.y, p.w, p.h);
-        ctx.fillStyle = '#6a5040'; ctx.fillRect(sx, p.y, p.w, 5);
-        ctx.fillStyle = '#3a2818'; ctx.fillRect(sx, p.y + p.h - 4, p.w, 4);
+    const ex = sx + p.w;
+    if (ex < 0 || sx > CANVAS_W) continue;
+    // Clip to visible area to avoid large-negative-x fillRect bugs
+    const drawX = Math.max(sx, 0);
+    const drawW = Math.min(ex, CANVAS_W) - drawX;
+    if (drawW <= 0) continue;
+    if (p.type === 'ground') {
+      ctx.fillStyle = '#3a2a1a'; ctx.fillRect(drawX, p.y, drawW, p.h);
+      ctx.fillStyle = '#5a3a2a'; ctx.fillRect(drawX, p.y, drawW, 8);
+      // Tile marks
+      ctx.fillStyle = '#4a2f1a';
+      const startTile = Math.ceil((drawX - sx) / 60) * 60;
+      for (let tx = startTile; tx < p.w && sx + tx < CANVAS_W; tx += 60) {
+        const markX = sx + tx;
+        if (markX >= 0 && markX < CANVAS_W) ctx.fillRect(markX, p.y, 2, 8);
       }
+    } else {
+      ctx.fillStyle = '#4a3828'; ctx.fillRect(drawX, p.y, drawW, p.h);
+      ctx.fillStyle = '#6a5040'; ctx.fillRect(drawX, p.y, drawW, 5);
+      ctx.fillStyle = '#3a2818'; ctx.fillRect(drawX, p.y + p.h - 4, drawW, 4);
     }
   }
 
