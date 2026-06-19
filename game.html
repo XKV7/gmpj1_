@@ -909,7 +909,7 @@ function checkLevelUp() {
     player.exp -= player.expToNext;
     player.level++;
     player.expToNext = Math.floor(50 * Math.pow(1.35, player.level - 1));
-    player.statPoints += 2;
+    player.statPoints += 3;
     player.hp = Math.min(player.hp + 20, player.maxHp);
     gs.state = 'levelup';
   }
@@ -1346,13 +1346,16 @@ function drawShopNPC(camX) {
   ctx.fillStyle = '#4a2a00'; ctx.fillRect(sx - 10, GROUND_Y - 65, 20, 8);
   ctx.fillStyle = '#fff'; ctx.font = '12px monospace'; ctx.textAlign = 'center';
   ctx.fillText('SHOP', sx, GROUND_Y - 78);
-  ctx.fillStyle = '#ff0';
-  ctx.fillText('[visit area]', sx, GROUND_Y - 65);
   // Sign
   ctx.fillStyle = '#5a3010'; ctx.fillRect(sx + 30, GROUND_Y - 80, 80, 40);
   ctx.fillStyle = '#ff0'; ctx.font = '10px monospace'; ctx.textAlign = 'center';
   ctx.fillText('SHOP', sx + 70, GROUND_Y - 65);
-  ctx.fillText('Press P near', sx + 70, GROUND_Y - 52);
+  ctx.fillText('F to open', sx + 70, GROUND_Y - 52);
+  // Show interaction hint if player is nearby
+  if (Math.abs(player.x - 2500) < 200) {
+    ctx.fillStyle = '#ff0'; ctx.font = 'bold 12px monospace'; ctx.textAlign = 'center';
+    ctx.fillText('F: 상점 열기', sx, GROUND_Y - 65);
+  }
 }
 
 function drawHUD() {
@@ -1396,32 +1399,64 @@ function drawHUD() {
     ctx.fillText('Stat Pts: ' + p.statPoints + ' [LEVELUP]', CANVAS_W - 10, 34);
   }
 
-  // Skill cooldowns (bottom)
-  const skills = ['Q', 'E', 'R'];
-  for (let i = 0; i < 3; i++) {
-    const rune = p.skillSlots[i];
-    const bx = CANVAS_W/2 - 90 + i * 62;
-    const by = CANVAS_H - 58;
-    ctx.fillStyle = '#222'; ctx.fillRect(bx, by, 48, 48);
-    ctx.strokeStyle = '#666'; ctx.lineWidth = 1; ctx.strokeRect(bx, by, 48, 48);
-    if (rune) {
-      ctx.fillStyle = rune.color || '#888';
-      ctx.fillRect(bx+2, by+2, 44, 44);
-      ctx.fillStyle = '#fff'; ctx.font = 'bold 16px monospace'; ctx.textAlign = 'center';
-      ctx.fillText(rune.icon || rune.name[0], bx + 24, by + 28);
-      // Cooldown overlay
-      const elapsed = Date.now() - (p.skillLastUsed[i] || 0);
-      const cd = rune.cooldown * (1 - (p.cdReduction || 0));
-      if (elapsed < cd) {
-        const frac = 1 - elapsed / cd;
-        ctx.fillStyle = 'rgba(0,0,0,0.6)';
-        ctx.fillRect(bx+2, by+2, 44, 44 * frac);
-        ctx.fillStyle = '#fff'; ctx.font = '10px monospace'; ctx.textAlign = 'center';
-        ctx.fillText(((cd - elapsed) / 1000).toFixed(1), bx + 24, by + 38);
-      }
+  // Built-in skill slots (Q, E) + charge (R)
+  const now = Date.now();
+  // Q: 검기
+  {
+    const bx = CANVAS_W/2 - 93, by = CANVAS_H - 58;
+    ctx.fillStyle = '#1a1a2e'; ctx.fillRect(bx, by, 48, 48);
+    ctx.strokeStyle = '#44f'; ctx.lineWidth = 2; ctx.strokeRect(bx, by, 48, 48);
+    ctx.fillStyle = '#aaf'; ctx.fillRect(bx+3, by+3, 42, 42);
+    ctx.fillStyle = '#fff'; ctx.font = 'bold 13px monospace'; ctx.textAlign = 'center';
+    ctx.fillText('검기', bx+24, by+28);
+    const qElapsed = now - builtinQLastUsed;
+    const qCd = BUILTIN_Q.cooldown * (1-(p.cdReduction||0));
+    if (qElapsed < qCd) {
+      const frac = 1 - qElapsed/qCd;
+      ctx.fillStyle = 'rgba(0,0,0,0.65)'; ctx.fillRect(bx+3, by+3, 42, 42*frac);
+      ctx.fillStyle = '#fff'; ctx.font = '10px monospace';
+      ctx.fillText(((qCd-qElapsed)/1000).toFixed(1)+'s', bx+24, by+38);
     }
-    ctx.fillStyle = '#aaa'; ctx.font = '10px monospace'; ctx.textAlign = 'center';
-    ctx.fillText(skills[i], bx + 24, by + 58);
+    ctx.fillStyle = '#aaa'; ctx.font = '10px monospace'; ctx.fillText('Q', bx+24, by+58);
+  }
+  // E: 패링
+  {
+    const bx = CANVAS_W/2 - 28, by = CANVAS_H - 58;
+    ctx.fillStyle = '#1a2a1a'; ctx.fillRect(bx, by, 48, 48);
+    ctx.strokeStyle = p.parryActive ? '#0ff' : '#4af'; ctx.lineWidth = p.parryActive ? 3 : 2;
+    ctx.strokeRect(bx, by, 48, 48);
+    ctx.fillStyle = p.parryActive ? '#0ff' : '#4af'; ctx.fillRect(bx+3, by+3, 42, 42);
+    ctx.fillStyle = '#fff'; ctx.font = 'bold 13px monospace'; ctx.textAlign = 'center';
+    ctx.fillText('패링', bx+24, by+28);
+    const eElapsed = now - builtinELastUsed;
+    const eCd = BUILTIN_E.cooldown * (1-(p.cdReduction||0));
+    if (eElapsed < eCd && !p.parryActive) {
+      const frac = 1 - eElapsed/eCd;
+      ctx.fillStyle = 'rgba(0,0,0,0.65)'; ctx.fillRect(bx+3, by+3, 42, 42*frac);
+      ctx.fillStyle = '#fff'; ctx.font = '10px monospace';
+      ctx.fillText(((eCd-eElapsed)/1000).toFixed(1)+'s', bx+24, by+38);
+    }
+    ctx.fillStyle = '#aaa'; ctx.font = '10px monospace'; ctx.fillText('E', bx+24, by+58);
+  }
+  // R: 차징 검격
+  {
+    const bx = CANVAS_W/2 + 37, by = CANVAS_H - 58;
+    const chargeFrac = Math.min((p.chargeTimer||0)/90, 1);
+    ctx.fillStyle = '#2a1a0a'; ctx.fillRect(bx, by, 48, 48);
+    ctx.strokeStyle = chargeFrac >= 1 ? '#ff0' : '#f80'; ctx.lineWidth = 2; ctx.strokeRect(bx, by, 48, 48);
+    // Charge fill
+    if (p._rHeld) {
+      ctx.fillStyle = `rgba(255,200,0,${0.3 + chargeFrac*0.5})`;
+      ctx.fillRect(bx+3, by+3+42*(1-chargeFrac), 42, 42*chargeFrac);
+    }
+    ctx.fillStyle = '#fff'; ctx.font = 'bold 11px monospace'; ctx.textAlign = 'center';
+    ctx.fillText(chargeFrac>=1?'READY':'차징', bx+24, by+28);
+    if (p.chargeCooldown > 0) {
+      ctx.fillStyle = 'rgba(0,0,0,0.65)'; ctx.fillRect(bx+3, by+3, 42, 42);
+      ctx.fillStyle = '#fff'; ctx.font = '10px monospace';
+      ctx.fillText((p.chargeCooldown/60).toFixed(1)+'s', bx+24, by+38);
+    }
+    ctx.fillStyle = '#aaa'; ctx.font = '10px monospace'; ctx.fillText('R(꾹)', bx+24, by+58);
   }
 
   // Passive rune indicators
@@ -1449,7 +1484,7 @@ function drawHUD() {
     ctx.fillStyle = 'rgba(255,220,0,0.15)';
     ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
     ctx.fillStyle = '#ff0'; ctx.font = 'bold 14px monospace'; ctx.textAlign = 'center';
-    ctx.fillText('Press LEVELUP (auto-open) or click stat tree', CANVAS_W/2, CANVAS_H - 80);
+    ctx.fillText('L: Open Stat Tree  (' + p.statPoints + ' pts)', CANVAS_W/2, CANVAS_H - 80);
   }
 }
 
@@ -1816,10 +1851,6 @@ canvas.addEventListener('click', e => {
   else if (gs.state === 'inventory') handleInventoryClick(mx, my);
   else if (gs.state === 'title') startGame();
   else if (gs.state === 'gameover' || gs.state === 'victory') gs.state = 'title';
-  // shop open - check proximity to NPC
-  else if (gs.state === 'playing' && floorData && floorData.isShopFloor) {
-    if (Math.abs(player.x - 2500) < 150) gs.state = 'shop';
-  }
 });
 
 // ===== MAIN LOOP =====
