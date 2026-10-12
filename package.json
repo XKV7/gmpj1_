@@ -1,0 +1,23 @@
+{
+  "name": "windcourier",
+  "private": true,
+  "version": "1.0.0",
+  "description": "바람의 배달부 (Windcourier) — 절차 생성 3D 오픈월드 비행 어드벤처",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "three": "0.180.0"
+  },
+  "devDependencies": {
+    "@types/three": "0.180.0",
+    "typescript": "5.8.3",
+    "vite": "6.3.5",
+    "vitest": "3.2.4"
+  }
+}
