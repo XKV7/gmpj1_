@@ -110,6 +110,8 @@ button.small { padding: 6px 14px; font-size: 13px; }
 #cargo .hp i { display: block; height: 100%; background: #6fbf8a; }
 #stallwarn { position: absolute; left: 50%; top: 62%; transform: translateX(-50%); color: #fff; background: rgba(217,102,92,.85); padding: 6px 18px; border-radius: 99px; font-weight: 800; letter-spacing: .1em; animation: blink .5s infinite alternate; }
 @keyframes blink { from { opacity: 1; } to { opacity: .35; } }
+#reticle { position: fixed; left: 0; top: 0; width: 34px; height: 34px; border-radius: 50%; border: 2px solid rgba(255,255,255,.85); box-shadow: 0 0 0 1px rgba(61,53,72,.35), inset 0 0 0 1px rgba(61,53,72,.25); pointer-events: none; }
+#reticle::after { content: ''; position: absolute; left: 50%; top: 50%; width: 4px; height: 4px; margin: -2px 0 0 -2px; border-radius: 50%; background: rgba(255,255,255,.9); }
 #prompt { position: absolute; left: 50%; bottom: 120px; transform: translateX(-50%); padding: 8px 18px; font-size: 15px; font-weight: 600; }
 #prompt b { background: var(--ink); color: #fff; border-radius: 6px; padding: 1px 8px; margin-right: 6px; }
 #toasts { position: absolute; left: 50%; top: 140px; transform: translateX(-50%); display: flex; flex-direction: column; gap: 8px; align-items: center; }
@@ -133,7 +135,7 @@ button.small { padding: 6px 14px; font-size: 13px; }
 #ending p { margin: 0; color: var(--ink-soft); line-height: 1.8; }
 #ending .stats { display: flex; gap: 22px; margin: 14px 0; font-size: 15px; }
 #debug { position: fixed; left: 10px; top: 10px; font: 12px/1.5 ui-monospace, Menlo, monospace; color: #fff; background: rgba(20,16,30,.7); padding: 8px 12px; border-radius: 8px; white-space: pre; z-index: 60; }
-#hint { position: absolute; left: 22px; top: 18px; font-size: 12px; padding: 6px 12px; color: var(--ink-soft); }
+#hint { position: absolute; left: 50%; bottom: 200px; transform: translateX(-50%); max-width: min(560px, 60vw); text-align: center; font-size: 13px; padding: 7px 16px; color: var(--ink); }
 .flash { position: fixed; inset: 0; background: #fff; opacity: 0; transition: opacity .5s; pointer-events: none; }
 @media (max-width: 700px) {
   #gauges { transform: scale(.8); transform-origin: left bottom; }

@@ -49,6 +49,7 @@ export interface HudData {
   prompt: string | null;
   faded: boolean;
   hint: string;
+  reticle: { x: number; y: number } | null;
 }
 
 const esc = (s: string): string => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c] as string);
@@ -97,6 +98,7 @@ export class UI {
         <div id="prompt" class="hud-glass hidden"></div>
         <div id="toasts"></div>
       </div>
+      <div id="reticle" class="hidden"></div>
       <div id="dialog" class="hidden"><div class="who"></div><div class="txt"></div><div class="opts"></div></div>
       <div id="stun" class="hidden">어질어질… 잠시 쉬어 갈게요</div>
       <div id="panel-wrap" class="panel-wrap hidden"><div class="panel interactive" id="panel"></div></div>
@@ -115,7 +117,7 @@ export class UI {
       </div>
       <div id="debug" class="hidden"></div>
     `;
-    for (const id of ['loading', 'title', 'hud', 'compass', 'questline', 'timer', 'feathers', 'shards', 'speedo', 'altimeter', 'wind', 'cargo', 'stallwarn', 'prompt', 'toasts', 'dialog', 'stun', 'panel-wrap', 'panel', 'photo-bar', 'ending', 'debug', 'hint']) {
+    for (const id of ['loading', 'title', 'hud', 'compass', 'questline', 'timer', 'feathers', 'shards', 'speedo', 'altimeter', 'wind', 'cargo', 'stallwarn', 'reticle', 'prompt', 'toasts', 'dialog', 'stun', 'panel-wrap', 'panel', 'photo-bar', 'ending', 'debug', 'hint']) {
       this.els[id] = root.querySelector(`#${id}`) as HTMLElement;
     }
     root.addEventListener('click', (e) => this.onClick(e));
@@ -153,6 +155,7 @@ export class UI {
 
   showHud(on: boolean): void {
     this.els.hud.classList.toggle('hidden', !on);
+    if (!on) this.els.reticle.classList.add('hidden');
   }
 
   showStun(on: boolean): void {
@@ -261,6 +264,7 @@ export class UI {
       <h2>설정</h2>
       <div class="row"><label>그래픽 품질</label><select data-set="quality">${opt('low', '낮음')}${opt('medium', '중간')}${opt('high', '높음')}</select></div>
       <div class="row"><label>마우스 감도</label><input type="range" min="0.2" max="3" step="0.05" value="${s.mouseSensitivity}" data-set="mouseSensitivity"></div>
+      <div class="row"><label>비행 조작<br><span class="muted">쉬운 조작: 가고 싶은 방향을 가리키면 자동으로 기울이고 선회 · 고급 조작: 기체를 직접 조종</span></label><select data-set="controlMode"><option value="easy" ${s.controlMode !== 'classic' ? 'selected' : ''}>쉬운 조작</option><option value="classic" ${s.controlMode === 'classic' ? 'selected' : ''}>고급 조작</option></select></div>
       <div class="row"><label>Y축 반전</label><input type="checkbox" ${s.invertY ? 'checked' : ''} data-set="invertY"></div>
       <div class="row"><label>전체 볼륨</label><input type="range" min="0" max="1" step="0.01" value="${s.masterVolume}" data-set="masterVolume"></div>
       <div class="row"><label>음악</label><input type="range" min="0" max="1" step="0.01" value="${s.musicVolume}" data-set="musicVolume"></div>
@@ -272,15 +276,22 @@ export class UI {
   openControls(): void {
     this.showPanel('controls', `
       <h2>조작법</h2>
-      <h3>비행</h3>
+      <h3>비행 · 쉬운 조작 (기본)</h3>
+      <p class="muted" style="margin:0 0 8px">화면의 <b>조준 원</b>이 가고 싶은 방향이에요. 원을 움직이면 글라이더가 알아서 기울이고 돌아갑니다. 너무 느려지면 자동으로 기수를 내려 실속을 막아요.</p>
       <div class="keys">
-        <span><b>마우스</b> / <b>W</b><b>S</b></span><span>피치 (기수 내리기 / 올리기)</span>
-        <span><b>마우스</b> / <b>A</b><b>D</b></span><span>롤 (좌우 기울이기 — 기울이면 선회)</span>
-        <span><b>Q</b> <b>E</b></span><span>요 (좌우로 기수 돌리기)</span>
+        <span><b>마우스</b></span><span>조준 원 움직이기 (화면을 클릭하면 마우스가 잠겨요)</span>
+        <span><b>A</b><b>D</b> / <b>←</b><b>→</b></span><span>왼쪽 / 오른쪽으로 돌기</span>
+        <span><b>W</b><b>S</b> / <b>↑</b><b>↓</b></span><span>위로 / 아래로</span>
         <span><b>Shift</b></span><span>날개 접기 — 급강하로 속도 얻기</span>
-        <span><b>Space</b></span><span>날개 활짝 — 감속, 양력 증가, 착륙 준비</span>
+        <span><b>Space</b></span><span>날개 활짝 — 감속, 착륙 준비</span>
         <span><b>V</b></span><span>1인칭 / 3인칭 전환</span>
         <span><b>R</b></span><span>레이스 포기</span>
+      </div>
+      <h3>비행 · 고급 조작 (설정에서 선택)</h3>
+      <div class="keys">
+        <span><b>마우스</b> / <b>W</b><b>S</b></span><span>피치 (W 기수 내리기 / S 올리기)</span>
+        <span><b>마우스</b> / <b>A</b><b>D</b></span><span>롤 (기울이면 선회)</span>
+        <span><b>Q</b> <b>E</b></span><span>요 (좌우로 기수 돌리기)</span>
       </div>
       <h3>지상</h3>
       <div class="keys">
@@ -466,6 +477,9 @@ export class UI {
       this.drawWind(h);
     }
     this.els.stallwarn.classList.toggle('hidden', !(h.flying && h.stall > 0.4));
+    const rt = this.els.reticle;
+    rt.classList.toggle('hidden', !h.reticle);
+    if (h.reticle) rt.style.transform = `translate(${h.reticle.x}px, ${h.reticle.y}px) translate(-50%, -50%)`;
     const pr = this.els.prompt;
     pr.classList.toggle('hidden', !h.prompt);
     if (h.prompt) pr.innerHTML = h.prompt;

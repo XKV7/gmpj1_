@@ -10,6 +10,7 @@ export interface Settings {
   musicVolume: number;
   sfxVolume: number;
   seed: string;
+  controlMode: 'easy' | 'classic';
 }
 
 const KEY = 'windcourier.settings.v1';
@@ -22,6 +23,7 @@ export const defaultSettings = (): Settings => ({
   musicVolume: 0.6,
   sfxVolume: 0.8,
   seed: '바람',
+  controlMode: 'easy',
 });
 
 export function loadSettings(): Settings {

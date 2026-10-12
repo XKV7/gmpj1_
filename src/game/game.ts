@@ -104,6 +104,9 @@ export class Game implements UIHost {
   private prevPos = new THREE.Vector3();
   private prevRiverWind = new THREE.Vector3();
   private lastUnlockRequest = 0;
+  private aimYaw = 0;
+  private aimPitch = 0;
+  private wasFlying = false;
   private discoverTimer = 0;
   private tmpV = new THREE.Vector3();
   private stunShown = false;
@@ -766,7 +769,76 @@ export class Game implements UIHost {
     }
   }
 
+  /** Easy mode: steer an aim direction; an autopilot banks, turns and protects against stalls. */
+  private easyFlightInput(dt: number): FlightInput {
+    const i = this.input;
+    const s = this.settings;
+    const P = this.player;
+    const inv = s.invertY ? -1 : 1;
+    const sens = s.mouseSensitivity * 0.0028;
+    let pitchKey = 0;
+    if (i.down('KeyW') || i.down('ArrowUp')) pitchKey += 1;
+    if (i.down('KeyS') || i.down('ArrowDown')) pitchKey -= 1;
+    let turnKey = 0;
+    if (i.down('KeyA') || i.down('ArrowLeft') || i.down('KeyQ')) turnKey -= 1;
+    if (i.down('KeyD') || i.down('ArrowRight') || i.down('KeyE')) turnKey += 1;
+    const p = i.pad;
+    if (p.connected) {
+      pitchKey -= p.ly;
+      turnKey += p.lx;
+      if (i.padDown(PAD.LB)) turnKey -= 1;
+      if (i.padDown(PAD.RB)) turnKey += 1;
+      this.rig.lookYaw = lerp(this.rig.lookYaw, -p.rx * 1.6, damp(6, dt));
+      this.rig.lookPitch = lerp(this.rig.lookPitch, p.ry * 0.6, damp(6, dt));
+    } else {
+      this.rig.lookYaw = lerp(this.rig.lookYaw, 0, damp(3, dt));
+      this.rig.lookPitch = lerp(this.rig.lookPitch, 0, damp(3, dt));
+    }
+    const mousePitch = -i.mouseDY * sens * inv;
+    this.aimYaw += i.mouseDX * sens + clamp(turnKey, -1, 1) * 1.15 * dt;
+    this.aimPitch += mousePitch + clamp(pitchKey, -1, 1) * inv * 0.75 * dt;
+    // Hands off: drift back to a relaxed glide.
+    if (Math.abs(pitchKey) < 0.05 && Math.abs(mousePitch) < 1e-4) this.aimPitch = lerp(this.aimPitch, -0.07, damp(0.35, dt));
+
+    const f = P.flight;
+    const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(f.quat);
+    const right = new THREE.Vector3(1, 0, 0).applyQuaternion(f.quat);
+    const vdir = f.vel.lengthSq() > 1 ? f.vel.clone().normalize() : fwd;
+    const heading = Math.atan2(vdir.x, -vdir.z);
+    let headErr = this.aimYaw - heading;
+    while (headErr > Math.PI) headErr -= TAU;
+    while (headErr < -Math.PI) headErr += TAU;
+    // Keep the aim within a reachable cone ahead.
+    if (Math.abs(headErr) > 0.8) {
+      this.aimYaw = heading + Math.sign(headErr) * 0.8;
+      headErr = Math.sign(headErr) * 0.8;
+    }
+    // Stall protection: when slow, the nose may not point up.
+    const vs = stallSpeedFor(this.gliderParams(), 0);
+    const slow = clamp((vs * 1.3 - f.airspeed) / (vs * 0.3), 0, 1);
+    const maxPitch = lerp(0.55, -0.12, slow);
+    this.aimPitch = clamp(this.aimPitch, -1.0, maxPitch);
+    const bank = Math.asin(clamp(-right.y, -1, 1));
+    const targetBank = clamp(headErr * 1.9, -0.75, 0.75);
+    const roll = clamp((targetBank - bank) * 2.4, -1, 1);
+    const pathPitch = Math.asin(clamp(vdir.y, -1, 1));
+    let pitch = clamp((this.aimPitch - pathPitch) * 3 + Math.abs(bank) * 0.35, -1, 1);
+    if (slow > 0.5) pitch = Math.min(pitch, 0);
+    const yaw = clamp(headErr * 0.5, -0.6, 0.6);
+    const dive = Math.max(i.down('ShiftLeft') || i.down('ShiftRight') ? 1 : 0, p.rt);
+    const brake = Math.max(i.down('Space') ? 1 : 0, p.lt);
+    if (dive > 0.3) this.aimPitch = Math.min(this.aimPitch, pathPitch + 0.1);
+    return { pitch, roll, yaw, dive, brake };
+  }
+
+  /** Direction the easy-mode aim points to (world space). */
+  aimDirection(out = new THREE.Vector3()): THREE.Vector3 {
+    const cp = Math.cos(this.aimPitch);
+    return out.set(Math.sin(this.aimYaw) * cp, Math.sin(this.aimPitch), -Math.cos(this.aimYaw) * cp);
+  }
+
   private flightInput(dt: number): FlightInput {
+    if (this.settings.controlMode !== 'classic') return this.easyFlightInput(dt);
     const i = this.input;
     const s = this.settings;
     const inv = s.invertY ? -1 : 1;
@@ -817,6 +889,12 @@ export class Game implements UIHost {
     this.wind.sample(P.position, this.time, this.windSample);
     const ws = this.windSample;
 
+    if (P.mode === 'fly' && !this.wasFlying) {
+      const v = P.flight.vel;
+      this.aimYaw = Math.atan2(v.x, -v.z);
+      this.aimPitch = 0;
+    }
+    this.wasFlying = P.mode === 'fly';
     if (P.mode === 'fly') {
       // Wind rivers carry the glider: when the river airmass changes under you, your
       // ground velocity follows it (airspeed is kept), and you keep most of it on exit.
@@ -1376,6 +1454,14 @@ export class Game implements UIHost {
   /* HUD                                                                      */
   /* ======================================================================= */
 
+  private reticleScreen(flying: boolean): { x: number; y: number } | null {
+    if (!flying || this.settings.controlMode === 'classic' || this.rig.mode === 'first') return null;
+    const p = this.player.flight.pos.clone().addScaledVector(this.aimDirection(), 160);
+    p.project(this.rig.camera);
+    if (p.z > 1) return null;
+    return { x: (p.x * 0.5 + 0.5) * window.innerWidth, y: (-p.y * 0.5 + 0.5) * window.innerHeight };
+  }
+
   private updateHud(): void {
     const P = this.player;
     const flying = P.mode === 'fly';
@@ -1426,7 +1512,11 @@ export class Game implements UIHost {
     let hint = '';
     if (P.mode === 'walk' && this.save.quests.completed.length === 0 && this.save.quests.active.length === 0) hint = '우체국 게시판에서 의뢰를 받아 보세요 · F 이륙';
     else if (P.mode === 'walk' && this.save.quests.completed.length < 2) hint = 'F 이륙 · 절벽에서 뛰어내리기 · E 대화';
-    else if (flying && this.save.quests.completed.length < 2) hint = 'Shift 급강하 · Space 날개 활짝 · 꽃잎 기둥 = 상승기류';
+    else if (flying && this.save.quests.completed.length < 3) {
+      hint = this.settings.controlMode === 'classic'
+        ? 'W/S 기수 · A/D 기울이기 · Shift 급강하 · Space 감속 · 꽃잎 기둥 = 상승기류'
+        : '마우스·WASD로 조준 원을 움직여 방향 잡기 · Shift 급강하 · Space 감속/착륙 · 꽃잎 기둥 = 상승기류';
+    }
     const h: HudData = {
       flying,
       altitude: pos.y,
@@ -1450,6 +1540,7 @@ export class Game implements UIHost {
       prompt,
       faded: this.hudFade,
       hint,
+      reticle: this.reticleScreen(flying),
     };
     this.ui.updateHud(h);
   }
