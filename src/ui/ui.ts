@@ -264,7 +264,7 @@ export class UI {
       <h2>설정</h2>
       <div class="row"><label>그래픽 품질</label><select data-set="quality">${opt('low', '낮음')}${opt('medium', '중간')}${opt('high', '높음')}</select></div>
       <div class="row"><label>마우스 감도</label><input type="range" min="0.2" max="3" step="0.05" value="${s.mouseSensitivity}" data-set="mouseSensitivity"></div>
-      <div class="row"><label>비행 조작<br><span class="muted">쉬운 조작: 마우스 커서가 있는 쪽으로 날아감 · 고급 조작: 기체를 직접 조종</span></label><select data-set="controlMode"><option value="easy" ${s.controlMode !== 'classic' ? 'selected' : ''}>쉬운 조작</option><option value="classic" ${s.controlMode === 'classic' ? 'selected' : ''}>고급 조작</option></select></div>
+      <div class="row"><label>비행 조작<br><span class="muted">쉬운 조작: W 하강 · S 상승 · A/D 좌우 (키보드만) · 고급 조작: 기체를 직접 조종</span></label><select data-set="controlMode"><option value="easy" ${s.controlMode !== 'classic' ? 'selected' : ''}>쉬운 조작</option><option value="classic" ${s.controlMode === 'classic' ? 'selected' : ''}>고급 조작</option></select></div>
       <div class="row"><label>Y축 반전</label><input type="checkbox" ${s.invertY ? 'checked' : ''} data-set="invertY"></div>
       <div class="row"><label>전체 볼륨</label><input type="range" min="0" max="1" step="0.01" value="${s.masterVolume}" data-set="masterVolume"></div>
       <div class="row"><label>음악</label><input type="range" min="0" max="1" step="0.01" value="${s.musicVolume}" data-set="musicVolume"></div>
@@ -277,10 +277,10 @@ export class UI {
     this.showPanel('controls', `
       <h2>조작법</h2>
       <h3>비행 · 쉬운 조작 (기본)</h3>
-      <p class="muted" style="margin:0 0 8px">마우스 커서를 가고 싶은 곳에 두면 글라이더가 그쪽으로 날아가요. 커서를 위에 두면 올라가고, 아래에 두면 내려가고, 옆에 두면 그쪽으로 돌아요. 화면 가운데쯤이면 천천히 활공합니다.</p>
+      <p class="muted" style="margin:0 0 8px">키보드만으로 날아요. 키를 놓으면 지금 방향 그대로 천천히 활공합니다.</p>
       <div class="keys">
-        <span><b>마우스 커서</b></span><span>가는 방향 (위 = 상승, 아래 = 하강, 좌우 = 선회)</span>
-        <span><b>W</b><b>S</b> / <b>↑</b><b>↓</b></span><span>위로 / 아래로 (키를 누르는 동안 커서 대신 사용)</span>
+        <span><b>W</b> / <b>↑</b></span><span>하강</span>
+        <span><b>S</b> / <b>↓</b></span><span>상승</span>
         <span><b>A</b><b>D</b> / <b>←</b><b>→</b></span><span>왼쪽 / 오른쪽으로 돌기</span>
         <span><b>Shift</b></span><span>날개 접기 — 급강하로 속도 얻기</span>
         <span><b>Space</b></span><span>날개 활짝 — 감속, 착륙 준비</span>

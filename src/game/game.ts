@@ -767,58 +767,33 @@ export class Game implements UIHost {
     }
   }
 
-  /** Easy mode: fly straight toward the mouse cursor (or WASD/stick nudges). No auto-correction. */
+  /** Easy mode: keyboard only. W = down, S = up, A/D = turn. Releasing keys holds a gentle glide. */
   private easyFlightInput(_dt: number): FlightInput {
     const i = this.input;
     const P = this.player;
     let pitchKey = 0;
-    if (i.down('KeyW') || i.down('ArrowUp')) pitchKey += 1;
-    if (i.down('KeyS') || i.down('ArrowDown')) pitchKey -= 1;
+    if (i.down('KeyW') || i.down('ArrowUp')) pitchKey -= 1;
+    if (i.down('KeyS') || i.down('ArrowDown')) pitchKey += 1;
     let turnKey = 0;
     if (i.down('KeyA') || i.down('ArrowLeft') || i.down('KeyQ')) turnKey -= 1;
     if (i.down('KeyD') || i.down('ArrowRight') || i.down('KeyE')) turnKey += 1;
     const p = i.pad;
     if (p.connected) {
-      pitchKey -= p.ly;
+      pitchKey += p.ly;
       turnKey += p.lx;
       if (i.padDown(PAD.LB)) turnKey -= 1;
       if (i.padDown(PAD.RB)) turnKey += 1;
     }
     if (this.settings.invertY) pitchKey = -pitchKey;
-    const cam = this.rig.camera;
-    if (Math.abs(pitchKey) + Math.abs(turnKey) > 0.05) {
-      // Keys/stick: aim relative to the current flight direction.
-      const d = P.arcadeDir.clone();
-      const yaw = -clamp(turnKey, -1, 1) * 0.7;
-      d.applyAxisAngle(new THREE.Vector3(0, 1, 0), yaw);
-      const side = new THREE.Vector3().crossVectors(d, new THREE.Vector3(0, 1, 0)).normalize();
-      const curPitch = Math.asin(clamp(d.y, -1, 1));
-      const want = clamp(curPitch + clamp(pitchKey, -1, 1) * 0.6, -1.2, 1.1);
-      d.applyAxisAngle(side, want - curPitch);
-      this.aimVec.copy(d.normalize());
-    } else if (P.airTime < 0.4) {
-      this.aimVec.copy(P.arcadeDir);
-    } else {
-      // Mouse: cursor height relative to the point straight ahead = climb/descent angle,
-      // left/right offset = turn toward that side.
-      const nx = (i.mouseX / window.innerWidth) * 2 - 1;
-      const ny = -(i.mouseY / window.innerHeight) * 2 + 1;
-      const flat = new THREE.Vector3(P.arcadeDir.x, 0, P.arcadeDir.z);
-      if (flat.lengthSq() < 1e-4) flat.set(0, 0, -1);
-      flat.normalize();
-      cam.updateMatrixWorld();
-      const ahead = P.flight.pos.clone().addScaledVector(flat, 160).project(cam);
-      const inv = this.settings.invertY ? -1 : 1;
-      const pitchT = clamp((ny - ahead.y) * 1.25 * inv, -1.05, 0.9);
-      const yawOff = -clamp(nx - ahead.x, -1, 1) * 0.95;
-      const d = flat.applyAxisAngle(new THREE.Vector3(0, 1, 0), yawOff);
-      this.aimVec.set(d.x * Math.cos(pitchT), Math.sin(pitchT), d.z * Math.cos(pitchT));
-    }
-    // Keep the aim between straight-down-ish and a steep climb (no loops).
-    const ay = clamp(this.aimVec.y, -0.92, 0.8);
-    const flat = Math.hypot(this.aimVec.x, this.aimVec.z) || 1;
-    const k = Math.sqrt(1 - ay * ay) / flat;
-    this.aimVec.set(this.aimVec.x * k, ay, this.aimVec.z * k);
+    pitchKey = clamp(pitchKey, -1, 1);
+    turnKey = clamp(turnKey, -1, 1);
+    // Heading: keep flying where you are going; A/D turn.
+    const flat = new THREE.Vector3(P.arcadeDir.x, 0, P.arcadeDir.z);
+    if (flat.lengthSq() < 1e-4) flat.set(0, 0, -1);
+    flat.normalize().applyAxisAngle(new THREE.Vector3(0, 1, 0), -turnKey * 0.7);
+    // Pitch: S climbs, W descends, nothing = gentle glide.
+    const pitchT = pitchKey > 0 ? 0.5 * pitchKey : pitchKey < 0 ? 0.55 * pitchKey : -0.04;
+    this.aimVec.set(flat.x * Math.cos(pitchT), Math.sin(pitchT), flat.z * Math.cos(pitchT));
     const dive = Math.max(i.down('ShiftLeft') || i.down('ShiftRight') ? 1 : 0, p.rt);
     const brake = Math.max(i.down('Space') ? 1 : 0, p.lt);
     return { pitch: 0, roll: 0, yaw: 0, dive, brake };
@@ -1448,16 +1423,8 @@ export class Game implements UIHost {
   /* HUD                                                                      */
   /* ======================================================================= */
 
-  private reticleScreen(flying: boolean): { x: number; y: number } | null {
-    const show = flying && this.easyMode && this.rig.mode !== 'first' && !this.ui.dialogOpen && !this.ui.panelOpen;
-    document.body.classList.toggle('aim-cursor', show);
-    if (!show) return null;
-    const i = this.input;
-    const keys = ['KeyW', 'KeyA', 'KeyS', 'KeyD', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'KeyQ', 'KeyE'].some((k) => i.down(k));
-    if (!keys) return { x: i.mouseX, y: i.mouseY };
-    const p = this.player.flight.pos.clone().addScaledVector(this.aimVec, 160).project(this.rig.camera);
-    if (p.z > 1) return null;
-    return { x: (p.x * 0.5 + 0.5) * window.innerWidth, y: (-p.y * 0.5 + 0.5) * window.innerHeight };
+  private reticleScreen(_flying: boolean): { x: number; y: number } | null {
+    return null;
   }
 
   private updateHud(): void {
@@ -1513,7 +1480,7 @@ export class Game implements UIHost {
     else if (flying && this.save.quests.completed.length < 3) {
       hint = this.settings.controlMode === 'classic'
         ? 'W/S 기수 · A/D 기울이기 · Shift 급강하 · Space 감속 · 꽃잎 기둥 = 상승기류'
-        : '마우스 커서를 가고 싶은 곳에 두세요 (위 = 상승) · Shift 급강하 · Space 감속/착륙 · 꽃잎 기둥 = 상승기류';
+        : 'W 하강 · S 상승 · A/D 좌우 · Shift 급강하 · Space 감속/착륙 · 꽃잎 기둥 = 상승기류';
     }
     const h: HudData = {
       flying,
