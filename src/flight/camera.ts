@@ -15,6 +15,8 @@ export class CameraRig {
   lookYaw = 0; // flight free-look offset
   lookPitch = 0;
   baseFov = 62;
+  /** Keep the chase camera level (pointer-aim mode): the screen horizon stays put. */
+  levelFollow = false;
   speedFov = 0;
   private pos = new THREE.Vector3();
   private look = new THREE.Vector3();
@@ -71,10 +73,11 @@ export class CameraRig {
       flat.normalize();
       // Free-look rotates the offset around the glider.
       const offDir = flat.clone().applyAxisAngle(new THREE.Vector3(0, 1, 0), this.lookYaw);
-      const elev = clamp(dir.y * 0.6, -0.5, 0.6) - this.lookPitch;
+      const elev = (this.levelFollow ? 0 : clamp(dir.y * 0.6, -0.5, 0.6)) - this.lookPitch;
       desired.copy(s.pos).addScaledVector(offDir, -dist * Math.cos(elev)).add(new THREE.Vector3(0, 3.6 + dist * Math.sin(-elev) * 0.6, 0));
-      target.copy(s.pos).addScaledVector(dir, 10).add(new THREE.Vector3(0, 1.2, 0));
-      rollTarget = bankAngle(s.quat) * 0.35;
+      if (this.levelFollow) target.copy(s.pos).addScaledVector(flat, 14).add(new THREE.Vector3(0, 2.2, 0));
+      else target.copy(s.pos).addScaledVector(dir, 10).add(new THREE.Vector3(0, 1.2, 0));
+      rollTarget = bankAngle(s.quat) * (this.levelFollow ? 0.15 : 0.35);
       const stiff = p.mode === 'stunned' ? 1.5 : 7;
       if (!this.initialized) { this.pos.copy(desired); this.look.copy(target); }
       this.pos.lerp(desired, damp(stiff, dt));

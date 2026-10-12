@@ -142,3 +142,4 @@ button.small { padding: 6px 14px; font-size: 13px; }
   #cargo { transform: scale(.85); transform-origin: right bottom; }
   #title { padding-left: 6vw; }
 }
+body.aim-cursor #game { cursor: none; }

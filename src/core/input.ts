@@ -19,6 +19,10 @@ export class Input {
   private keys = new Set<string>();
   private pressedKeys = new Set<string>();
   mouseDX = 0;
+  /** Cursor position in client pixels (for pointer-aim flying). */
+  mouseX = window.innerWidth / 2;
+  mouseY = window.innerHeight / 2;
+  cursorMoved = 0;
   mouseDY = 0;
   wheel = 0;
   mouseDown = false;
@@ -43,6 +47,12 @@ export class Input {
     });
     window.addEventListener('blur', () => this.keys.clear());
     window.addEventListener('mousemove', (e) => {
+      if (!this.pointerLocked) {
+        this.mouseX = e.clientX;
+        this.mouseY = e.clientY;
+        this.cursorMoved = performance.now();
+        this.lastActivity = performance.now();
+      }
       if (this.pointerLocked || this.mouseDown) {
         this.mouseDX += e.movementX;
         this.mouseDY += e.movementY;

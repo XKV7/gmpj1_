@@ -91,6 +91,7 @@ export class Player {
 
   startFlying(pos: THREE.Vector3, vel: THREE.Vector3): void {
     this.mode = 'fly';
+    this.arcadeReset = true;
     this.flight = makeFlightState(pos, vel);
     this.airTime = 0;
     this.glider.root.visible = true;
@@ -172,7 +173,69 @@ export class Player {
     this.walkAnim += (Math.min(1, Math.hypot(this.walkVel.x, this.walkVel.z) / 6) - this.walkAnim) * damp(10, dt);
   }
 
-  updateFly(dt: number, input: FlightInput, wind: THREE.Vector3, params: GliderParams, shake: number, q: WorldQuery, events: PlayerEvent[]): void {
+  /** Easy-mode state: the glider flies exactly along `arcadeDir` at `arcadeSpeed` (airspeed). */
+  arcadeDir = new THREE.Vector3(0, 0, -1);
+  arcadeSpeed = 25;
+  private arcadeBank = 0;
+  private arcadeReset = true;
+
+  /**
+   * Easy flight: steer straight toward `aim`. Gravity still trades height for speed, but a
+   * gentle "wind push" keeps you near cruise speed, so pointing up really climbs.
+   */
+  private arcadeStep(dt: number, aim: THREE.Vector3, input: FlightInput, wind: THREE.Vector3, params: GliderParams, shake: number): void {
+    const s = this.flight;
+    if (this.arcadeReset) {
+      const air = s.vel.clone().sub(wind);
+      this.arcadeSpeed = Math.max(air.length(), 12);
+      this.arcadeDir.copy(air.lengthSq() > 0.01 ? air.normalize() : new THREE.Vector3(0, 0, -1).applyQuaternion(s.quat));
+      this.arcadeReset = false;
+    }
+    const d = this.arcadeDir;
+    const prevDir = d.clone();
+    // Turn toward the aim at a limited rate.
+    const target = aim.clone().normalize();
+    const ang = d.angleTo(target);
+    const maxTurn = (1.25 + params.liftLevel * 0.08) * dt;
+    if (ang > 1e-4) {
+      const axis = new THREE.Vector3().crossVectors(d, target);
+      if (axis.lengthSq() < 1e-8) axis.set(0, 1, 0);
+      d.applyAxisAngle(axis.normalize(), Math.min(ang, maxTurn)).normalize();
+    }
+    let v = this.arcadeSpeed;
+    // Too slow: the nose drops by itself until speed returns.
+    const vs = 11 - params.stallLevel;
+    if (v < vs + 3) {
+      const down = new THREE.Vector3(d.x * 0.3, -1, d.z * 0.3).normalize();
+      d.lerp(down, Math.min(1, (vs + 3 - v) * 0.6 * dt)).normalize();
+    }
+    const mass = params.massFactor;
+    const cruise = 27 + params.speedLevel * 3 - input.brake * 10;
+    const push = input.dive > 0.3 ? 0 : Math.min(Math.max((cruise - v) * 0.7, 0), (4.8 + params.liftLevel * 0.7) / mass);
+    const cd = (0.0012 / (1 + 0.15 * params.speedLevel)) * (1 + input.brake * 2.5) * (1 - input.dive * 0.35);
+    v += (-9.81 * d.y * (input.dive > 0.3 ? 1.3 : 1) + push - cd * v * v * Math.sign(v)) * dt;
+    v = Math.max(v, 4);
+    this.arcadeSpeed = v;
+    s.airspeed = v;
+    s.stall = v < vs ? Math.min(1, (vs - v) / 4) : 0;
+    s.aoa = 0;
+    s.sideslip = 0;
+    // Ground velocity = flight along the path + the air's own motion (thermals, rivers, storms).
+    s.vel.copy(d).multiplyScalar(v).add(wind);
+    s.pos.addScaledVector(s.vel, dt);
+    // Visual attitude: face along the path, bank into turns.
+    const turn = new THREE.Vector3().crossVectors(prevDir, d).y / Math.max(dt, 1e-4);
+    this.arcadeBank += (Math.max(-1, Math.min(1, -turn * 0.55)) - this.arcadeBank) * damp(5, dt);
+    const m = new THREE.Matrix4().lookAt(new THREE.Vector3(), d.clone().add(new THREE.Vector3(0, 0.04, 0)).normalize(), UP);
+    s.quat.setFromRotationMatrix(m);
+    s.quat.multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), this.arcadeBank));
+    if (shake > 0.01) {
+      s.quat.multiply(new THREE.Quaternion().setFromEuler(new THREE.Euler((Math.random() - 0.5) * shake * 0.05, 0, (Math.random() - 0.5) * shake * 0.08)));
+    }
+    s.gforce = 1 + Math.abs(turn) * v / 9.81;
+  }
+
+  updateFly(dt: number, input: FlightInput, wind: THREE.Vector3, params: GliderParams, shake: number, q: WorldQuery, events: PlayerEvent[], aim: THREE.Vector3 | null = null): void {
     this.airTime += dt;
     this.crashCooldown -= dt;
     const s = this.flight;
@@ -192,10 +255,21 @@ export class Player {
         const flat = new THREE.Vector3(fwd.x, 0.05, fwd.z).normalize();
         const targetQ = new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().lookAt(new THREE.Vector3(), flat, UP));
         s.quat.slerp(targetQ, kk * 0.8);
+        if (aim) {
+          this.arcadeSpeed = Math.min(this.arcadeSpeed, s.vel.length());
+          this.arcadeDir.y = Math.max(this.arcadeDir.y, -0.15);
+          this.arcadeDir.normalize();
+        }
       }
     }
-    const sub = Math.max(1, Math.ceil(dt / (1 / 120)));
-    for (let i = 0; i < sub; i++) stepFlight(s, input, wind, params, dt / sub, shake);
+    if (aim) {
+      const sub = Math.max(1, Math.ceil(dt / (1 / 60)));
+      for (let i = 0; i < sub; i++) this.arcadeStep(dt / sub, aim, input, wind, params, shake);
+    } else {
+      this.arcadeReset = true;
+      const sub = Math.max(1, Math.ceil(dt / (1 / 120)));
+      for (let i = 0; i < sub; i++) stepFlight(s, input, wind, params, dt / sub, shake);
+    }
     this.fold += (input.dive - this.fold) * damp(8, dt);
     this.spread += (input.brake - this.spread) * damp(8, dt);
 
@@ -226,6 +300,7 @@ export class Player {
       const vn = s.vel.dot(c.push);
       if (vn < 0) s.vel.addScaledVector(c.push, -vn * 1.4);
       s.vel.multiplyScalar(0.8);
+      this.arcadeReset = true;
       events.push({ type: 'bump' });
     }
   }
